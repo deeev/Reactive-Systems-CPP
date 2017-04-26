@@ -9,13 +9,15 @@ template <typename Type_>
 struct buffer {
     virtual ~buffer() {}
 
-    virtual void put(Type_) = 0;
+    virtual void put(Type_&) = 0;
 
     virtual Type_ get(void) = 0;
 };
 
+using namespace std;
+
 template <typename Type_>
-class continuous_write_buffer: public buffer<std::unique_ptr<Type_>> {
+class continuous_write_buffer: public buffer<unique_ptr<Type_>> {
 public:
     continuous_write_buffer()
         : element_{nullptr}
@@ -24,71 +26,75 @@ public:
     {
     }
 
-    void put(std::unique_ptr<Type_> element) override {
+    void put(unique_ptr<Type_>& element) override {
         {
-            std::unique_lock<std::mutex> lock__(mtx_);
-
-	    if(element_!=nullptr){ //&&std::is_pointer<Type_>::value
-		std::cout<<"not empty\n";
-             }
-            element_ = std::move(element);
+            std::unique_lock<mutex> lock__(mtx_);
+            element_ = move(element);
         }
         cond_.notify_one();
     }
 
-    std::unique_ptr<Type_> get() override {
+    unique_ptr<Type_> get() override {
         decltype(element_) return__ = nullptr;
         {
-            std::unique_lock<std::mutex> lock__(mtx_);
+            unique_lock<mutex> lock__(mtx_);
             cond_.wait(lock__, [&]{return element_!=nullptr;});
-            return__ = std::move(element_);
+            return__ = move(element_);
         }
         return return__;
     }
 
 private:
-    std::unique_ptr<Type_> element_;
-    std::mutex mtx_;
-    std::condition_variable cond_;
+    unique_ptr<Type_> element_;
+    mutex mtx_;
+    condition_variable cond_;
 };
 
 
-typedef int Element;
+class Element {
+public:
+	Element(int i):i_(i){cout<<"Element with value "<< i_ << " created"<<endl;}
+	~Element(){cout<<"Element with value "<< i_ << " destroyed"<<endl;}
+
+private:
+int i_;
+};
 
 class Consumer {
 public:
-	explicit Consumer(continuous_write_buffer<Element>& b) : b1(b){}
-	continuous_write_buffer<Element>& b1;
+	explicit Consumer(continuous_write_buffer<Element>& cwb) : cwb_(cwb){}
+	continuous_write_buffer<Element>& cwb_;
 	 void operator()() {
 		
 		while(true){
 			usleep(500000);
-			std::unique_ptr<int> r = b1.get();
-           		std::cout << "Get "<< *r <<" from Buffer"<<std::endl;
-
+			cout<<"Consumer"<<endl;
+			unique_ptr<Element> get = cwb_.get();
 		}
 	}
 };
 
 class Producer {
 public:
-	explicit Producer(continuous_write_buffer<Element>& b) : b1(b){}
-	continuous_write_buffer<Element>& b1;
+	explicit Producer(continuous_write_buffer<Element>& cwb) : cwb_(cwb){}
+	continuous_write_buffer<Element>& cwb_;
 	 void operator()() {
+
 		int i = 0;
 		while(true){
 			usleep(250000);
-		i++;
-		b1.put(std::move(std::unique_ptr<int> (new int(i))));
-		std::cout << "Put " <<i<<" into Buffer"<<std::endl;
+			cout<<"Producer"<<endl;
+			unique_ptr<Element> put(new Element(i));
+			cwb_.put(put);
+			i++;
 		}
 	}
 };
 int main() {
 
   	continuous_write_buffer<Element> cwb;
-	std::thread ConsumerThread( (Consumer(cwb)) );
-	std::thread ProducerThread( (Producer(cwb)) );
+	thread ConsumerThread( (Consumer(cwb)) );
+	thread ProducerThread( (Producer(cwb)) );
 	ProducerThread.join();
 	ConsumerThread.join();
 
